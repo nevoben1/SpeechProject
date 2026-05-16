@@ -23,6 +23,7 @@ The script handles:
 
 import argparse
 import csv
+import json
 import os
 import sys
 import time
@@ -88,6 +89,8 @@ def send_audio(server_url: str, audio_path: str, retries: int = 3, timeout: int 
 
 # ── CSV helpers ────────────────────────────────────────────────────────────────
 
+CONF_LABELS = ["ANGRY", "DISGUSTED", "FEARFUL", "HAPPY", "NEUTRAL", "SAD", "SURPRISED", "UNKNOWN"]
+
 OUTPUT_FIELDS = [
     "file_path",
     "dataset",
@@ -98,7 +101,11 @@ OUTPUT_FIELDS = [
     "e2v_raw",
     "e2v_4class",
     "e2v_correct",
-    "e2v_conf_top",   # confidence score of the predicted emotion
+    "e2v_conf_top",
+    # Full confidence scores per emotion
+    *[f"conf_{lbl.lower()}" for lbl in CONF_LABELS],
+    # 768-dim embedding as JSON string
+    "embedding",
 ]
 
 
@@ -159,12 +166,15 @@ def run(args):
             if result is None:
                 errors += 1
                 print(f"[{i}/{total}] FAILED — {fp}")
-                writer.writerow({
+                row = {
                     "file_path": fp, "dataset": dataset, "speaker_id": speaker_id,
                     "ground_truth_raw": gt_raw, "ground_truth_4class": gt_4class,
                     "e2v_raw": "ERROR", "e2v_4class": "ERROR", "e2v_correct": "",
-                    "e2v_conf_top": "",
-                })
+                    "e2v_conf_top": "", "embedding": "",
+                }
+                for lbl in CONF_LABELS:
+                    row[f"conf_{lbl.lower()}"] = ""
+                writer.writerow(row)
                 out_file.flush()
                 continue
 
@@ -178,15 +188,15 @@ def run(args):
             e2v_4class  = normalize_label(e2v_raw)
             e2v_correct = (e2v_4class == gt_4class)
             conf        = result.get("confidence", {})
-
-            # Get the confidence score for the predicted emotion
-            conf_top = conf.get(e2v_raw, conf.get(e2v_raw.lower(), ""))
+            conf_top    = conf.get(e2v_raw, conf.get(e2v_raw.lower(), ""))
+            embedding   = result.get("embedding", None)
+            emb_str     = json.dumps(embedding) if embedding is not None else ""
 
             processed += 1
             if e2v_correct:
                 e2v_correct_count += 1
 
-            writer.writerow({
+            row = {
                 "file_path":           fp,
                 "dataset":             dataset,
                 "speaker_id":          speaker_id,
@@ -196,7 +206,11 @@ def run(args):
                 "e2v_4class":          e2v_4class,
                 "e2v_correct":         e2v_correct,
                 "e2v_conf_top":        conf_top,
-            })
+                "embedding":           emb_str,
+            }
+            for lbl in CONF_LABELS:
+                row[f"conf_{lbl.lower()}"] = conf.get(lbl, "")
+            writer.writerow(row)
             out_file.flush()
 
             if processed % 10 == 0:

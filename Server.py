@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File
 from funasr import AutoModel
-import tempfile, os
+import tempfile, os, json
+import numpy as np
 
 app = FastAPI()
 
@@ -29,7 +30,7 @@ def run_emotion2vec(audio_path: str) -> dict:
         input=audio_path,
         output_dir=None,
         granularity="utterance",
-        extract_embedding=False,
+        extract_embedding=True,
     )
     scores = result[0]["scores"]
     labels = result[0]["labels"]
@@ -40,9 +41,15 @@ def run_emotion2vec(audio_path: str) -> dict:
         EMOTION2VEC_LABEL_MAP.get(lbl.lower(), lbl.upper()): round(score, 4)
         for lbl, score in zip(labels, scores)
     }
+    feats = result[0].get("feats", None)
+    if feats is not None:
+        embedding = np.array(feats).flatten().tolist()
+    else:
+        embedding = None
     return {
-        "emotion": emotion,
+        "emotion":    emotion,
         "confidence": confidence,
+        "embedding":  embedding,
     }
 
 @app.post("/analyze")
