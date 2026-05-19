@@ -138,7 +138,7 @@ def run(args):
     if done:
         print(f"Resuming — {len(done)} samples already done, skipping.\n")
 
-    write_header = not os.path.exists(args.output) or len(done) == 0
+    write_header = not os.path.exists(args.output) or os.path.getsize(args.output) == 0
     out_file = open(args.output, "a", newline="", encoding="utf-8")
     writer = csv.DictWriter(out_file, fieldnames=OUTPUT_FIELDS)
     if write_header:

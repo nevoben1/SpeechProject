@@ -34,11 +34,16 @@ def run_emotion2vec(audio_path: str) -> dict:
     )
     scores = result[0]["scores"]
     labels = result[0]["labels"]
+
+    def clean_label(lbl: str) -> str:
+        if "/" in lbl:
+            lbl = lbl.split("/")[-1].strip()
+        return EMOTION2VEC_LABEL_MAP.get(lbl.lower(), lbl.upper())
+
     best_idx = scores.index(max(scores))
-    raw_label = labels[best_idx].lower()
-    emotion = EMOTION2VEC_LABEL_MAP.get(raw_label, raw_label.upper())
+    emotion = clean_label(labels[best_idx])
     confidence = {
-        EMOTION2VEC_LABEL_MAP.get(lbl.lower(), lbl.upper()): round(score, 4)
+        clean_label(lbl): round(score, 4)
         for lbl, score in zip(labels, scores)
     }
     feats = result[0].get("feats", None)
