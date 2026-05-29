@@ -1,12 +1,12 @@
 """
 Acoustic Feature Extraction
-Reads a results CSV (iemocap_full or cremad_full), extracts 6 acoustic features
+Reads a results CSV (iemocap_full or cremad_full), extracts 4 acoustic features
 per WAV file, and writes an enriched CSV with new columns appended.
 
 Features extracted (voiced frames only):
-    mean_f0, std_f0, min_f0, max_f0  — pitch via Praat/parselmouth
-    energy                            — RMS energy via librosa
-    speech_rate                       — voiced frames / total frames ratio
+    mean_f0, std_f0  — pitch via Praat/parselmouth
+    energy           — RMS energy via librosa
+    speech_rate      — voiced frames / total frames ratio
 
 Usage:
     python extract_acoustic_features.py --input cremad_full.csv --output cremad_features.csv
@@ -22,11 +22,10 @@ import numpy as np
 import pandas as pd
 import parselmouth
 from joblib import Parallel, delayed
-from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
-FEATURE_COLS = ["mean_f0", "std_f0", "min_f0", "max_f0", "energy", "speech_rate"]
+FEATURE_COLS = ["mean_f0", "std_f0", "energy", "speech_rate"]
 
 
 def extract_features(file_path: str) -> dict:
@@ -44,10 +43,8 @@ def extract_features(file_path: str) -> dict:
         if len(voiced) >= 2:
             mean_f0 = float(np.mean(voiced))
             std_f0  = float(np.std(voiced))
-            min_f0  = float(np.min(voiced))
-            max_f0  = float(np.max(voiced))
         else:
-            mean_f0 = std_f0 = min_f0 = max_f0 = np.nan
+            mean_f0 = std_f0 = np.nan
 
         # Speech rate: ratio of voiced frames to total frames
         total_frames = len(f0_values)
@@ -59,11 +56,9 @@ def extract_features(file_path: str) -> dict:
         energy = float(np.mean(rms))
 
         return {
-            "mean_f0":    mean_f0,
-            "std_f0":     std_f0,
-            "min_f0":     min_f0,
-            "max_f0":     max_f0,
-            "energy":     energy,
+            "mean_f0":     mean_f0,
+            "std_f0":      std_f0,
+            "energy":      energy,
             "speech_rate": speech_rate,
         }
 
@@ -91,7 +86,7 @@ def main():
 
     print(f"Extracting features with {args.workers} workers...")
     results = Parallel(n_jobs=args.workers, backend="loky")(
-        delayed(process_row)(row) for row in tqdm(rows, unit="file")
+        delayed(process_row)(row) for row in rows
     )
 
     feat_df = pd.DataFrame(results, columns=FEATURE_COLS)

@@ -27,7 +27,7 @@ LABEL_MAP = {
     "hap": "happy",
     "exc": "happy",      # excitement → happiness (standard in literature)
     "neu": "neutral",
-    "fru": "neutral",    # frustration → neutral (common mapping)
+    "fru": "angry",      # frustration → angry (acoustic similarity; standard in literature)
     "fea": None,         # fear — <1% of samples, typically dropped
     "sur": None,         # surprise — <1% of samples, typically dropped
     "dis": None,         # disgust — <1% of samples, typically dropped
@@ -134,9 +134,12 @@ def run(root: Path, output: Path, keep_unmapped: bool):
                     skipped_no_wav += 1
                     continue
 
-                # Speaker ID: first part before underscore position 2
-                # Ses01F_impro01_F000 → speaker = Ses01F
-                speaker_id = utt_id.split("_")[0]
+                # Speaker ID: session number + utterance gender (token[2][0])
+                # Ses01F_impro01_F000 → Ses01_F, Ses01M_impro01_M000 → Ses01_M
+                parts_id = utt_id.split("_")
+                session   = parts_id[0][:5]    # 'Ses01'
+                gender    = parts_id[-1][0]    # 'F' or 'M' — always last token
+                speaker_id = f"{session}_{gender}"
 
                 rows.append({
                     "file_path":    str(wav_path),
@@ -161,12 +164,12 @@ def run(root: Path, output: Path, keep_unmapped: bool):
     print("═" * 55)
 
     # Label distribution
-    from collections import Counter
-    dist = Counter(r["ground_truth"] for r in rows)
-    print("\nLabel distribution:")
-    for label, count in sorted(dist.items(), key=lambda x: -x[1]):
-        pct = count / len(rows) * 100
-        print(f"  {label:<12} {count:>5}  ({pct:.1f}%)")
+    #from collections import Counter
+    #dist = Counter(r["ground_truth"] for r in rows)
+    #print("\nLabel distribution:")
+    #for label, count in sorted(dist.items(), key=lambda x: -x[1]):
+    #    pct = count / len(rows) * 100
+    #    print(f"  {label:<12} {count:>5}  ({pct:.1f}%)")
 
 
 if __name__ == "__main__":

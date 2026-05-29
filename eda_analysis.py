@@ -1,17 +1,18 @@
 import ast
+import matplotlib
+matplotlib.use("Agg")
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.decomposition import PCA
+from scipy.stats import mannwhitneyu
 
 IEMOCAP_CSV = "iemocap_features_full.csv"
 CREMAD_CSV  = "cremad_features_full.csv"
 
-CONF_COLS     = ["conf_angry", "conf_disgusted", "conf_fearful",
-                 "conf_happy", "conf_neutral", "conf_sad",
-                 "conf_surprised", "conf_unknown"]
-ACOUSTIC_COLS = ["mean_f0", "std_f0", "min_f0", "max_f0", "energy", "speech_rate"]
+ACOUSTIC_COLS = ["mean_f0", "std_f0", "energy", "speech_rate"]
 
 
 def load(path):
@@ -39,14 +40,6 @@ def plot_confusion_matrix(df, dataset_name):
     plt.tight_layout()
     plt.savefig(f"confusion_{dataset_name.lower()}.png", dpi=150)
     plt.show()
-
-
-def per_class_metrics(df, dataset_name):
-    report = classification_report(df["ground_truth_4class"], df["e2v_4class"], output_dict=True)
-    metrics = pd.DataFrame(report).T
-    print(f"\n=== {dataset_name} Per-Class Metrics ===")
-    print(metrics.round(3))
-    return metrics
 
 
 # ─── Phase 1: Confidence Distribution ────────────────────────────────────────
@@ -80,35 +73,10 @@ def plot_confidence_distribution(df, dataset_name):
     )
 
 
-def plot_softmax_heatmap(df, dataset_name):
-    """Mean softmax scores per true class on misclassified samples — shows where probability mass leaks."""
-    wrong = df[df["e2v_correct"] == False]
-    available = [c for c in CONF_COLS if c in df.columns]
-    if not available:
-        return
-
-    mean_conf = wrong.groupby("ground_truth_4class")[available].mean()
-    plt.figure(figsize=(10, 5))
-    sns.heatmap(mean_conf, annot=True, fmt=".2f", cmap="YlOrRd")
-    plt.title(f"{dataset_name} — Mean Softmax Scores on Misclassified Samples")
-    plt.xlabel("Class Confidence")
-    plt.ylabel("True Class")
-    plt.tight_layout()
-    plt.savefig(f"softmax_heatmap_{dataset_name.lower()}.png", dpi=150)
-    plt.show()
-
 
 # ─── Phase 2: Speaker Analysis (IEMOCAP only) ────────────────────────────────
 
 def speaker_accuracy(df):
-    spk_acc = df.groupby("speaker_id")["e2v_correct"].mean().sort_values()
-    spk_acc.plot(kind="bar", color="steelblue", figsize=(12, 4))
-    plt.title("IEMOCAP — Per-Speaker Accuracy")
-    plt.ylabel("Accuracy")
-    plt.tight_layout()
-    plt.savefig("speaker_accuracy.png", dpi=150)
-    plt.show()
-
     pivot = df.groupby(["speaker_id", "ground_truth_4class"])["e2v_correct"].mean().unstack()
     plt.figure(figsize=(12, 6))
     sns.heatmap(pivot, annot=True, fmt=".2f", cmap="RdYlGn", vmin=0, vmax=1)
@@ -116,9 +84,6 @@ def speaker_accuracy(df):
     plt.tight_layout()
     plt.savefig("speaker_class_accuracy.png", dpi=150)
     plt.show()
-
-    print("\nPer-speaker accuracy:")
-    print(spk_acc.round(3))
 
 
 # ─── Phase 3: Acoustic Feature Breakdown ─────────────────────────────────────
@@ -131,13 +96,22 @@ def acoustic_analysis(df, dataset_name):
 
     df = df.copy()
     df["result"] = df["e2v_correct"].map({True: "Correct", False: "Wrong"})
+    classes = sorted(df["ground_truth_4class"].unique())
 
     for col in available:
-        plt.figure(figsize=(14, 5))
-        df.boxplot(column=col, by=["ground_truth_4class", "result"])
-        plt.title(f"{dataset_name} — {col} by Class and Result")
-        plt.suptitle("")
-        plt.xticks(rotation=45)
+        fig, axes = plt.subplots(1, len(classes), figsize=(4 * len(classes), 5), sharey=True)
+        if len(classes) == 1:
+            axes = [axes]
+        for ax, cls in zip(axes, classes):
+            subset = df[df["ground_truth_4class"] == cls]
+            sns.violinplot(data=subset, x="result", y=col, order=["Correct", "Wrong"],
+                           palette={"Correct": "steelblue", "Wrong": "tomato"},
+                           inner="box", ax=ax)
+            ax.set_title(cls)
+            ax.set_xlabel("")
+            if ax != axes[0]:
+                ax.set_ylabel("")
+        fig.suptitle(f"{dataset_name} — {col} by Class and Result", fontsize=13)
         plt.tight_layout()
         plt.savefig(f"acoustic_{col}_{dataset_name.lower()}.png", dpi=150)
         plt.show()
@@ -146,11 +120,54 @@ def acoustic_analysis(df, dataset_name):
     print(f"\n{dataset_name} — Acoustic feature correlation with correctness:")
     print(corr.sort_values().round(3))
 
-
-# ─── Phase 4: Embedding Visualization — TODO ─────────────────────────────────
+# ─── Phase 4: Embedding Visualization ───────────────────────────────────────
 
 def embedding_visualization(df, dataset_name):
-    pass
+    if "embedding" not in df.columns:
+        print(f"{dataset_name}: no embedding column found")
+        return
+
+    df = df.copy()
+    embeddings = np.array(df["embedding"].apply(ast.literal_eval).tolist())
+
+    pca = PCA(n_components=2)
+    coords = pca.fit_transform(embeddings)
+    var = pca.explained_variance_ratio_
+
+    df["pc1"] = coords[:, 0]
+    df["pc2"] = coords[:, 1]
+    df["result"] = df["e2v_correct"].map({True: "Correct", False: "Wrong"})
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Plot 1 — colored by true class
+    classes = sorted(df["ground_truth_4class"].unique())
+    palette = sns.color_palette("tab10", len(classes))
+    for cls, color in zip(classes, palette):
+        mask = df["ground_truth_4class"] == cls
+        axes[0].scatter(df.loc[mask, "pc1"], df.loc[mask, "pc2"],
+                        label=cls, color=color, alpha=0.5, s=15)
+    axes[0].set_title(f"{dataset_name} — Embeddings by True Class")
+    axes[0].set_xlabel(f"PC1 ({var[0]:.1%} var)")
+    axes[0].set_ylabel(f"PC2 ({var[1]:.1%} var)")
+    axes[0].legend(markerscale=2)
+
+    # Plot 2 — colored by correct/wrong
+    colors = {"Correct": "steelblue", "Wrong": "tomato"}
+    for result, color in colors.items():
+        mask = df["result"] == result
+        axes[1].scatter(df.loc[mask, "pc1"], df.loc[mask, "pc2"],
+                        label=result, color=color, alpha=0.4, s=15)
+    axes[1].set_title(f"{dataset_name} — Embeddings by Prediction Outcome")
+    axes[1].set_xlabel(f"PC1 ({var[0]:.1%} var)")
+    axes[1].set_ylabel(f"PC2 ({var[1]:.1%} var)")
+    axes[1].legend(markerscale=2)
+
+    plt.tight_layout()
+    plt.savefig(f"embedding_pca_{dataset_name.lower()}.png", dpi=150)
+    plt.show()
+    print(f"{dataset_name} — PCA variance explained: PC1={var[0]:.1%}, PC2={var[1]:.1%}")
+
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -165,16 +182,19 @@ def main():
     # Phase 1
     for df, name in [(df_iemocap, "IEMOCAP"), (df_cremad, "CREMA-D")]:
         plot_confusion_matrix(df, name)
-        per_class_metrics(df, name)
         plot_confidence_distribution(df, name)
-        plot_softmax_heatmap(df, name)
 
     # Phase 2 — IEMOCAP only
     speaker_accuracy(df_iemocap)
 
-    # Phase 3 — uncomment when ready
-    # acoustic_analysis(df_iemocap, "IEMOCAP")
-    # acoustic_analysis(df_cremad, "CREMA-D")
+    # Phase 3
+    acoustic_analysis(df_iemocap, "IEMOCAP")
+    acoustic_analysis(df_cremad, "CREMA-D")
+
+    # Phase 4
+    embedding_visualization(df_iemocap, "IEMOCAP")
+    embedding_visualization(df_cremad, "CREMA-D")
+
 
 
 if __name__ == "__main__":
